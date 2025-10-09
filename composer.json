@@ -1,0 +1,33 @@
+{
+  "name": "kanopi/drupal-sdc-validator",
+  "description": "CLI tool to validate Drupal Single Directory Component (.component.yml) files.",
+  "type": "library",
+  "license": "MIT",
+  "autoload": {
+    "psr-4": {
+      "Kanopi\\DrupalSdcValidator\\": "src/"
+    }
+  },
+  "bin": [
+    "bin/validate-sdc"
+  ],
+  "require": {
+    "php": ">=8.1",
+    "symfony/yaml": "^6.0",
+    "justinrainbow/json-schema": "^5.2"
+  },
+  "authors": [
+    {
+      "name": "Andy Sipple",
+      "email": "andy.sipple@kanopi.com"
+    }
+  ],
+  "keywords": [
+    "drupal",
+    "sdc",
+    "validator",
+    "cli",
+    "yml",
+    "components"
+  ]
+}
