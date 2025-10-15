@@ -13,8 +13,8 @@
   ],
   "require": {
     "php": ">=8.1",
-    "symfony/yaml": "^6.0",
-    "justinrainbow/json-schema": "^5.2"
+    "symfony/yaml": "^6.0 || ^7.0",
+    "justinrainbow/json-schema": "^5.2 || ^6.0"
   },
   "authors": [
     {
