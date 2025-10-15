@@ -40,7 +40,7 @@ class Validator
       return true;
     });
 
-    // Try to find local schema file first, fall back to remote.
+    // Find schema file.
     $schemaPath = $this->findSchemaFile();
 
     // Collect all .component.yml files.
@@ -54,6 +54,7 @@ class Validator
       return 0;
     }
 
+    // Validate each file.
     $hasErrors = false;
     $totalFiles = 0;
     $filesWithErrors = 0;
@@ -62,6 +63,7 @@ class Validator
       $totalFiles++;
 
       try {
+        // Parse YAML file.
         $yamlData = Yaml::parseFile($filePath);
 
         // Add synthetic 'id' if not present (based on directory name).
@@ -69,17 +71,14 @@ class Validator
           $yamlData['id'] = basename(dirname($filePath));
         }
 
-        // Remove $schema property - it's informational and can cause validation issues.
-        unset($yamlData['$schema']);
+        // Validate like Drupal's ComponentValidator.
+        $errors = $this->validateComponentDefinition($yamlData, $filePath, $schemaPath, $enforce_schemas);
 
-        // Validate like Drupal's ComponentValidator::validateDefinition().
-        $allErrors = $this->validateComponentDefinition($yamlData, $filePath, $schemaPath, $enforce_schemas);
-
-        if (!empty($allErrors)) {
+        if (!empty($errors)) {
           $hasErrors = true;
           $filesWithErrors++;
           echo "\n{$filePath} has validation errors:\n";
-          foreach ($allErrors as $error) {
+          foreach ($errors as $error) {
             echo "  • {$error}\n";
           }
         }
@@ -96,6 +95,7 @@ class Validator
       echo "✗ Validation failed!\n";
       echo "  Total files checked: {$totalFiles}\n";
       echo "  Files with errors: {$filesWithErrors}\n";
+      echo "\nThese errors match what Drupal's ComponentValidator would throw.\n";
       return 1;
     } else {
       echo "✓ All {$totalFiles} component files are valid!\n";
@@ -105,22 +105,15 @@ class Validator
 
   /**
    * Finds the schema file path.
-   *
-   * Tries multiple possible locations for the Drupal schema file.
-   *
-   * @return string
-   *   The absolute path to the schema file.
    */
   private function findSchemaFile(): string
   {
-    // Possible schema locations (relative to project root).
     $possiblePaths = [
       'web/core/assets/schemas/v1/metadata.schema.json',
       'docroot/core/assets/schemas/v1/metadata.schema.json',
       'core/assets/schemas/v1/metadata.schema.json',
     ];
 
-    // Try from current working directory.
     $cwd = getcwd();
     foreach ($possiblePaths as $relativePath) {
       $fullPath = $cwd . '/' . $relativePath;
@@ -129,7 +122,6 @@ class Validator
       }
     }
 
-    // Error if schema file not found.
     echo "Error: Schema file not found. Tried:\n";
     foreach ($possiblePaths as $path) {
       echo "  - $path\n";
@@ -138,107 +130,12 @@ class Validator
   }
 
   /**
-   * Loads schema (cached or remote).
-   */
-  private function getSchema(string $remoteUrl): ?object
-  {
-    static $schema = null;
-    if ($schema !== null) {
-      return $schema;
-    }
-
-    // Cache location.
-    $cacheDir = sys_get_temp_dir() . '/sdc-schema-cache';
-    $cacheFile = $cacheDir . '/metadata-full.schema.json';
-
-    if (!is_dir($cacheDir)) {
-      mkdir($cacheDir, 0777, true);
-    }
-
-    // Use cached schema if < 24 hours old.
-    if (file_exists($cacheFile) && (time() - filemtime($cacheFile)) < 86400) {
-      $schema = json_decode(file_get_contents($cacheFile));
-      if ($schema !== null) {
-        return $schema;
-      }
-    }
-
-    // Fetch remote schema.
-    echo "Fetching schema from remote...\n";
-    $context = stream_context_create([
-      'http' => [
-        'timeout' => 10,
-        'user_agent' => 'Drupal SDC Validator/1.0',
-      ],
-      'ssl' => [
-        'verify_peer' => true,
-        'verify_peer_name' => true,
-      ],
-    ]);
-
-    $schemaContent = @file_get_contents($remoteUrl, false, $context);
-
-    // Try curl as fallback if file_get_contents fails
-    if ($schemaContent === false && function_exists('curl_init')) {
-      echo "Retrying with cURL...\n";
-      $ch = curl_init($remoteUrl);
-      curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-      curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-      curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-      curl_setopt($ch, CURLOPT_USERAGENT, 'Drupal SDC Validator/1.0');
-      $schemaContent = curl_exec($ch);
-      $curlError = curl_error($ch);
-      curl_close($ch);
-
-      if ($schemaContent === false || $curlError) {
-        echo "Warning: Unable to fetch remote schema";
-        if ($curlError) {
-          echo ": " . $curlError;
-        }
-        echo "\nContinuing with basic validation only.\n";
-        return null;
-      }
-    } elseif ($schemaContent === false) {
-      $error = error_get_last();
-      echo "Warning: Unable to fetch remote schema";
-      if ($error) {
-        echo ": " . $error['message'];
-      }
-      echo "\nContinuing with basic validation only.\n";
-      return null;
-    }
-
-    $schema = json_decode($schemaContent);
-    if ($schema === null) {
-      echo "Error: Invalid schema format. Basic validation only.\n";
-      return null;
-    }
-
-    // Cache schema.
-    file_put_contents($cacheFile, $schemaContent);
-
-    return $schema;
-  }
-
-  /**
    * Validates component definition like ComponentValidator::validateDefinition().
-   *
-   * @param array $definition
-   *   The component definition from YAML.
-   * @param string $filePath
-   *   The file path (for error context).
-   * @param string $schemaPath
-   *   The path to the JSON schema file.
-   * @param bool $enforce_schemas
-   *   Whether to enforce schema definitions.
-   *
-   * @return array
-   *   Array of error messages.
    */
   private function validateComponentDefinition(array $definition, string $filePath, string $schemaPath, bool $enforce_schemas): array
   {
     $errors = [];
-    $componentId = $definition['id'] ?? 'unknown';
+    $componentId = $definition['id'] ?? basename(dirname($filePath));
 
     // 1. Check for name collisions between props and slots.
     $prop_names = array_keys($definition['props']['properties'] ?? []);
@@ -253,11 +150,11 @@ class Validator
     }
 
     // 2. Check if schema (props) exists.
-    $propsSchema = $definition['props'] ?? NULL;
-    if (!$propsSchema) {
+    $schema = $definition['props'] ?? NULL;
+    if (!$schema) {
       if ($enforce_schemas) {
         $errors[] = sprintf(
-          'The component "%s" does not provide schema information. Schema definitions are mandatory for components declared in modules. For components declared in themes, schema definitions are only mandatory if the "enforce_prop_schemas" key is set to "true" in the theme info file.',
+          'The component "%s" does not provide schema information (props).',
           $componentId
         );
       }
@@ -265,18 +162,17 @@ class Validator
     }
 
     // 3. If there are no props, force casting to object instead of array.
-    if (($propsSchema['properties'] ?? NULL) === []) {
-      $propsSchema['properties'] = new \stdClass();
-      $definition['props']['properties'] = new \stdClass();
+    if (($schema['properties'] ?? NULL) === []) {
+      $schema['properties'] = new \stdClass();
     }
 
     // 4. Ensure that all property types are strings.
     $non_string_props = [];
     foreach ($prop_names as $prop) {
-      if (!isset($propsSchema['properties'][$prop]['type'])) {
+      if (!isset($schema['properties'][$prop]['type'])) {
         continue;
       }
-      $type = $propsSchema['properties'][$prop]['type'];
+      $type = $schema['properties'][$prop]['type'];
       $types = !is_array($type) ? [$type] : $type;
       $non_string_types = array_filter($types, static fn (mixed $type) => !is_string($type));
       if ($non_string_types) {
@@ -293,7 +189,7 @@ class Validator
     }
 
     // 5. Detect props with class types and validate they exist.
-    $classes_per_prop = $this->getClassProps($propsSchema);
+    $classes_per_prop = $this->getClassProps($schema);
     $missing_class_errors = [];
     foreach ($classes_per_prop as $prop_name => $class_types) {
       $missing_classes = array_filter($class_types, static fn(string $class) => !class_exists($class) && !interface_exists($class));
@@ -308,13 +204,10 @@ class Validator
     }
 
     // 6. Remove non JSON Schema types for validation.
-    $definition['props'] = $this->nullifyClassPropsSchema($propsSchema, $classes_per_prop);
+    $definition['props'] = $this->nullifyClassPropsSchema($schema, $classes_per_prop);
 
     // 7. Validate against JSON Schema.
     try {
-      // Recursively remove any $schema properties from the definition.
-      $definition = $this->removeSchemaReferences($definition);
-
       $validator = new JsonValidator();
       $definition_object = JsonValidator::arrayToObjectRecursive($definition);
       $validator->reset();
@@ -328,7 +221,8 @@ class Validator
           $errors[] = sprintf('[%s] %s', $error['property'], $error['message']);
         }
       }
-    } catch (\Exception $e) {
+    }
+    catch (\Exception $e) {
       $errors[] = 'Schema validation error: ' . $e->getMessage();
     }
 
@@ -339,35 +233,7 @@ class Validator
   }
 
   /**
-   * Recursively removes $schema properties from an array.
-   *
-   * @param array $data
-   *   The array to clean.
-   *
-   * @return array
-   *   The cleaned array.
-   */
-  private function removeSchemaReferences(array $data): array
-  {
-    unset($data['$schema']);
-
-    foreach ($data as $key => $value) {
-      if (is_array($value)) {
-        $data[$key] = $this->removeSchemaReferences($value);
-      }
-    }
-
-    return $data;
-  }
-
-  /**
    * Gets the props that are not JSON Schema types (class names).
-   *
-   * @param array $props_schema
-   *   The props schema.
-   *
-   * @return array
-   *   Associative array of prop names to class type arrays.
    */
   private function getClassProps(array $props_schema): array
   {
@@ -389,14 +255,6 @@ class Validator
 
   /**
    * Nullify class props schema for JSON Schema validation.
-   *
-   * @param array $schema_props
-   *   The props schema.
-   * @param array $classes_per_prop
-   *   Associative array of prop names to class types.
-   *
-   * @return array
-   *   The modified schema with class types replaced by 'null'.
    */
   private function nullifyClassPropsSchema(array $schema_props, array $classes_per_prop): array
   {
@@ -421,20 +279,23 @@ class Validator
   {
     $files = [];
 
-    // If relative, resolve relative to CWD.
+    // Convert relative paths to absolute.
     if (!str_starts_with($path, '/')) {
       $path = getcwd() . '/' . $path;
     }
 
+    // Check if path exists.
     if (!file_exists($path)) {
       echo "Warning: Path does not exist: {$path}\n";
       return $files;
     }
 
+    // If it's a single file, return it.
     if (is_file($path) && str_ends_with($path, '.component.yml')) {
       return [$path];
     }
 
+    // If it's a directory, find all .component.yml files recursively.
     if (is_dir($path)) {
       $directory = new \RecursiveDirectoryIterator($path, \RecursiveDirectoryIterator::SKIP_DOTS);
       $iterator = new \RecursiveIteratorIterator($directory);
