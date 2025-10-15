@@ -131,12 +131,45 @@ class Validator
     // Fetch remote schema.
     echo "Fetching schema from remote...\n";
     $context = stream_context_create([
-      'http' => ['timeout' => 10],
+      'http' => [
+        'timeout' => 10,
+        'user_agent' => 'Drupal SDC Validator/1.0',
+      ],
+      'ssl' => [
+        'verify_peer' => true,
+        'verify_peer_name' => true,
+      ],
     ]);
 
     $schemaContent = @file_get_contents($remoteUrl, false, $context);
-    if ($schemaContent === false) {
-      echo "Error: Unable to fetch remote schema. Basic validation only.\n";
+
+    // Try curl as fallback if file_get_contents fails
+    if ($schemaContent === false && function_exists('curl_init')) {
+      echo "Retrying with cURL...\n";
+      $ch = curl_init($remoteUrl);
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+      curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+      curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+      curl_setopt($ch, CURLOPT_USERAGENT, 'Drupal SDC Validator/1.0');
+      $schemaContent = curl_exec($ch);
+      $curlError = curl_error($ch);
+      curl_close($ch);
+
+      if ($schemaContent === false || $curlError) {
+        echo "Warning: Unable to fetch remote schema";
+        if ($curlError) {
+          echo ": " . $curlError;
+        }
+        echo "\nContinuing with basic validation only.\n";
+        return null;
+      }
+    } elseif ($schemaContent === false) {
+      $error = error_get_last();
+      echo "Warning: Unable to fetch remote schema";
+      if ($error) {
+        echo ": " . $error['message'];
+      }
+      echo "\nContinuing with basic validation only.\n";
       return null;
     }
 
