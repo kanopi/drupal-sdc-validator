@@ -53,11 +53,19 @@ vendor/bin/validate-sdc web/modules/custom/your_module/components --enforce-sche
 
 This will fail validation if any component is missing a `props` schema definition.
 
+### Validation Modes
+
+**Default (Lenient Mode)**
+- Components **without** `props` are valid (matches Drupal theme behavior)
+- Components **with** `props` are validated against the schema
+
+**Strict Mode (`--enforce-schemas`)**
+- **All** components must have `props` defined (matches Drupal module behavior)
+- Use this for module components or when you want strict validation
+
 ### Example Output
 
 ```
-Fetching schema from remote...
-
 web/themes/custom/mytheme/components/button/button.component.yml has validation errors:
   • The component "button" declared [variant] both as a prop and as a slot. Make sure to use different names.
   • [props.properties.size.type] The property type must be a string.

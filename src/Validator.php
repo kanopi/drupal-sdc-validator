@@ -23,10 +23,22 @@ class Validator
     $paths = array_slice($argv, 1);
 
     if (empty($paths)) {
-      echo "Usage: validate-sdc [path1] [path2] ...\n";
+      echo "Usage: validate-sdc [path1] [path2] ... [--enforce-schemas]\n";
       echo "Example: validate-sdc web/themes/custom/[theme_name]/components\n";
+      echo "Options:\n";
+      echo "  --enforce-schemas  Require schema definitions (props) for all components\n";
       return 1;
     }
+
+    // Check for --enforce-schemas flag.
+    $enforce_schemas = false;
+    $paths = array_filter($paths, function($path) use (&$enforce_schemas) {
+      if ($path === '--enforce-schemas') {
+        $enforce_schemas = true;
+        return false;
+      }
+      return true;
+    });
 
     // Find schema file.
     $schemaPath = $this->findSchemaFile();
@@ -60,7 +72,7 @@ class Validator
         }
 
         // Validate like Drupal's ComponentValidator.
-        $errors = $this->validateComponentDefinition($yamlData, $filePath, $schemaPath);
+        $errors = $this->validateComponentDefinition($yamlData, $filePath, $schemaPath, $enforce_schemas);
 
         if (!empty($errors)) {
           $hasErrors = true;
@@ -120,7 +132,7 @@ class Validator
   /**
    * Validates component definition like ComponentValidator::validateDefinition().
    */
-  private function validateComponentDefinition(array $definition, string $filePath, string $schemaPath): array
+  private function validateComponentDefinition(array $definition, string $filePath, string $schemaPath, bool $enforce_schemas): array
   {
     $errors = [];
     $componentId = $definition['id'] ?? basename(dirname($filePath));
@@ -137,24 +149,24 @@ class Validator
       );
     }
 
-    // 2. Check props structure if present.
-    if (isset($definition['props'])) {
-      if (!isset($definition['props']['type'])) {
-        $errors[] = "props must have a 'type' field";
-      }
-      elseif ($definition['props']['type'] === 'object' && !isset($definition['props']['properties'])) {
-        $errors[] = "props with type 'object' must have a 'properties' field (use 'properties: {}' if empty)";
-      }
-    }
-
-    // 3. Check if schema (props) exists - now required.
+    // 2. Check if schema (props) exists.
     $schema = $definition['props'] ?? NULL;
     if (!$schema) {
-      $errors[] = sprintf(
-        'The component "%s" does not provide schema information (props).',
-        $componentId
-      );
+      if ($enforce_schemas) {
+        $errors[] = sprintf(
+          'The component "%s" does not provide schema information. Schema definitions are mandatory for components declared in modules. For components declared in themes, schema definitions are only mandatory if the "enforce_prop_schemas" key is set to "true" in the theme info file.',
+          $componentId
+        );
+      }
       return $errors;
+    }
+
+    // 3. Check props structure.
+    if (!isset($definition['props']['type'])) {
+      $errors[] = "props must have a 'type' field";
+    }
+    elseif ($definition['props']['type'] === 'object' && !isset($definition['props']['properties'])) {
+      $errors[] = "props with type 'object' must have a 'properties' field (use 'properties: {}' if empty)";
     }
 
     // 4. If there are no props, force casting to object instead of array.
