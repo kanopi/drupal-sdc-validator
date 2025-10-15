@@ -8,6 +8,10 @@ use JsonSchema\Constraints\Constraint;
 
 /**
  * Validates Drupal Single Directory Component (.component.yml) files.
+ *
+ * This validator mirrors the validation logic from Drupal core's
+ * ComponentValidator class in:
+ * web/core/lib/Drupal/Core/Theme/Component/ComponentValidator.php
  */
 class Validator
 {
@@ -62,20 +66,16 @@ class Validator
       try {
         $yamlData = Yaml::parseFile($filePath);
 
+        // Add synthetic 'id' if not present (based on directory name).
+        if (!isset($yamlData['id'])) {
+          $yamlData['id'] = basename(dirname($filePath));
+        }
+
         // Remove $schema property - it's informational and can cause validation issues.
         unset($yamlData['$schema']);
 
-        // Handle empty properties object.
-        if (isset($yamlData['props']['properties']) && $yamlData['props']['properties'] === []) {
-          $yamlData['props']['properties'] = new \stdClass();
-        }
-
-        $jsonData = json_decode(json_encode($yamlData));
-
-        $structureErrors = $this->validateComponentStructure($yamlData);
-        $schemaErrors = $this->validateAgainstSchema($jsonData, $schema, $enforce_schemas);
-
-        $allErrors = array_merge($structureErrors, $schemaErrors);
+        // Validate like Drupal's ComponentValidator::validateDefinition().
+        $allErrors = $this->validateComponentDefinition($yamlData, $filePath, $schema, $enforce_schemas);
 
         if (!empty($allErrors)) {
           $hasErrors = true;
@@ -189,182 +189,167 @@ class Validator
   }
 
   /**
-   * Validates basic SDC structure.
+   * Validates component definition like ComponentValidator::validateDefinition().
+   *
+   * @param array $definition
+   *   The component definition from YAML.
+   * @param string $filePath
+   *   The file path (for error context).
+   * @param object|null $schema
+   *   The JSON schema object to validate against.
+   * @param bool $enforce_schemas
+   *   Whether to enforce schema definitions.
+   *
+   * @return array
+   *   Array of error messages.
    */
-  private function validateComponentStructure(array $data): array
+  private function validateComponentDefinition(array $definition, string $filePath, ?object $schema, bool $enforce_schemas): array
   {
     $errors = [];
+    $componentId = $definition['id'] ?? 'unknown';
 
-    if (empty($data['name'])) {
-      $errors[] = "Missing required field: 'name'";
-    }
-
-    // Check for name collisions between props and slots.
-    $prop_names = array_keys($data['props']['properties'] ?? []);
-    $slot_names = array_keys($data['slots'] ?? []);
+    // 1. Check for name collisions between props and slots.
+    $prop_names = array_keys($definition['props']['properties'] ?? []);
+    $slot_names = array_keys($definition['slots'] ?? []);
     $collisions = array_intersect($prop_names, $slot_names);
     if ($collisions) {
-      $component_id = $data['machineName'] ?? $data['name'] ?? 'unknown';
       $errors[] = sprintf(
         'The component "%s" declared [%s] both as a prop and as a slot. Make sure to use different names.',
-        $component_id,
+        $componentId,
         implode(', ', $collisions)
       );
     }
 
-    if (isset($data['props'])) {
-      if (!isset($data['props']['type'])) {
-        $errors[] = "props must have a 'type' field";
-      } elseif ($data['props']['type'] === 'object' && !isset($data['props']['properties'])) {
-        $errors[] = "props with type 'object' must have a 'properties' field (use 'properties: {}' if empty)";
+    // 2. Check if schema (props) exists.
+    $propsSchema = $definition['props'] ?? NULL;
+    if (!$propsSchema) {
+      if ($enforce_schemas) {
+        $errors[] = sprintf(
+          'The component "%s" does not provide schema information. Schema definitions are mandatory for components declared in modules. For components declared in themes, schema definitions are only mandatory if the "enforce_prop_schemas" key is set to "true" in the theme info file.',
+          $componentId
+        );
       }
-
-      // Validate that all property types are strings.
-      if (isset($data['props']['properties'])) {
-        $non_string_props = [];
-        foreach ($data['props']['properties'] as $prop => $prop_def) {
-          if (isset($prop_def['type'])) {
-            $type = $prop_def['type'];
-            $types = !is_array($type) ? [$type] : $type;
-            $non_string_types = array_filter($types, fn($t) => !is_string($t));
-            if ($non_string_types) {
-              $non_string_props[] = $prop;
-            }
-          }
-        }
-
-        if ($non_string_props) {
-          $component_id = $data['machineName'] ?? $data['name'] ?? 'unknown';
-          $errors[] = sprintf(
-            'The component "%s" uses non-string types for properties: %s.',
-            $component_id,
-            implode(', ', $non_string_props)
-          );
-        }
-      }
-    }
-
-    if (isset($data['slots']) && !is_array($data['slots'])) {
-      $errors[] = "slots must be an object/array";
-    }
-
-    return $errors;
-  }
-
-  /**
-   * Validates a YAML data object against a JSON schema.
-   */
-  private function validateAgainstSchema(object $data, ?object $schema, bool $enforce_schemas = false): array
-  {
-    $errors = [];
-
-    // Remove $schema property from data object to prevent validation issues.
-    unset($data->{'$schema'});
-
-    // Check if schema is enforced but missing.
-    if ($enforce_schemas && !isset($data->props)) {
-      $component_id = $data->machineName ?? $data->name ?? 'unknown';
-      $errors[] = sprintf(
-        'The component "%s" does not provide schema information. Schema definitions are mandatory for components declared in modules. For components declared in themes, schema definitions are only mandatory if the "enforce_prop_schemas" key is set to "true" in the theme info file.',
-        $component_id
-      );
       return $errors;
     }
 
-    if ($schema === null) {
-      return [];
+    // 3. If there are no props, force casting to object instead of array.
+    if (($propsSchema['properties'] ?? NULL) === []) {
+      $propsSchema['properties'] = new \stdClass();
+      $definition['props']['properties'] = new \stdClass();
     }
 
-    // Validate class/interface types if present.
-    if (isset($data->props->properties)) {
-      $class_errors = $this->validateClassTypes($data);
-      $errors = array_merge($errors, $class_errors);
-
-      // Remove class types from the schema for JSON validation.
-      $data = $this->removeClassTypesFromData($data);
-    }
-
-    $validator = new JsonValidator();
-    $validator->validate($data, $schema, Constraint::CHECK_MODE_TYPE_CAST);
-
-    if (!$validator->isValid()) {
-      foreach ($validator->getErrors() as $error) {
-        $message = sprintf('[%s] %s', $error['property'], $error['message']);
-        $errors[] = $message;
-      }
-    }
-
-    return $errors;
-  }
-
-  /**
-   * Validates class/interface types in props.
-   */
-  private function validateClassTypes(object $data): array
-  {
-    $errors = [];
-    $component_id = $data->machineName ?? $data->name ?? 'unknown';
-
-    foreach ($data->props->properties as $prop_name => $prop_def) {
-      if (!isset($prop_def->type)) {
+    // 4. Ensure that all property types are strings.
+    $non_string_props = [];
+    foreach ($prop_names as $prop) {
+      if (!isset($propsSchema['properties'][$prop]['type'])) {
         continue;
       }
+      $type = $propsSchema['properties'][$prop]['type'];
+      $types = !is_array($type) ? [$type] : $type;
+      $non_string_types = array_filter($types, static fn (mixed $type) => !is_string($type));
+      if ($non_string_types) {
+        $non_string_props[] = $prop;
+      }
+    }
 
-      $types = is_array($prop_def->type) ? $prop_def->type : [$prop_def->type];
+    if ($non_string_props) {
+      $errors[] = sprintf(
+        'The component "%s" uses non-string types for properties: %s.',
+        $componentId,
+        implode(', ', $non_string_props)
+      );
+    }
 
-      // Filter for class/interface types (non-standard JSON Schema types).
-      $class_types = array_filter($types, function($type) {
-        return !in_array($type, ['array', 'boolean', 'integer', 'null', 'number', 'object', 'string']);
-      });
+    // 5. Detect props with class types and validate they exist.
+    $classes_per_prop = $this->getClassProps($propsSchema);
+    $missing_class_errors = [];
+    foreach ($classes_per_prop as $prop_name => $class_types) {
+      $missing_classes = array_filter($class_types, static fn(string $class) => !class_exists($class) && !interface_exists($class));
+      foreach ($missing_classes as $class) {
+        $missing_class_errors[] = sprintf(
+          'Unable to find class/interface "%s" specified in the prop "%s" for the component "%s".',
+          $class,
+          $prop_name,
+          $componentId
+        );
+      }
+    }
 
-      // Check if these classes/interfaces exist.
-      foreach ($class_types as $class) {
-        if (!class_exists($class) && !interface_exists($class)) {
-          $errors[] = sprintf(
-            'Unable to find class/interface "%s" specified in the prop "%s" for the component "%s".',
-            $class,
-            $prop_name,
-            $component_id
-          );
+    // 6. Remove non JSON Schema types for validation.
+    $definition['props'] = $this->nullifyClassPropsSchema($propsSchema, $classes_per_prop);
+
+    // 7. Validate against JSON Schema (if available).
+    if ($schema !== null) {
+      $validator = new JsonValidator();
+      $definition_object = JsonValidator::arrayToObjectRecursive($definition);
+      $validator->reset();
+      $validator->validate($definition_object, $schema, Constraint::CHECK_MODE_TYPE_CAST);
+
+      if (!$validator->isValid()) {
+        foreach ($validator->getErrors() as $error) {
+          $errors[] = sprintf('[%s] %s', $error['property'], $error['message']);
         }
       }
     }
 
+    // 8. Add missing class errors.
+    $errors = array_merge($errors, $missing_class_errors);
+
     return $errors;
   }
 
   /**
-   * Removes class types from data for JSON Schema validation.
+   * Gets the props that are not JSON Schema types (class names).
+   *
+   * @param array $props_schema
+   *   The props schema.
+   *
+   * @return array
+   *   Associative array of prop names to class type arrays.
    */
-  private function removeClassTypesFromData(object $data): object
+  private function getClassProps(array $props_schema): array
   {
-    $data = clone $data;
-
-    if (!isset($data->props->properties)) {
-      return $data;
+    $classes_per_prop = [];
+    foreach ($props_schema['properties'] ?? [] as $prop_name => $prop_def) {
+      $type = $prop_def['type'] ?? 'null';
+      $types = is_string($type) ? [$type] : $type;
+      // Filter to only class types (not standard JSON schema types).
+      $class_types = array_filter($types, static fn(string $type) => !in_array(
+        $type,
+        ['array', 'boolean', 'integer', 'null', 'number', 'object', 'string']
+      ));
+      if (!empty($class_types)) {
+        $classes_per_prop[$prop_name] = $class_types;
+      }
     }
+    return $classes_per_prop;
+  }
 
-    foreach ($data->props->properties as $prop_name => $prop_def) {
-      if (!isset($prop_def->type)) {
+  /**
+   * Nullify class props schema for JSON Schema validation.
+   *
+   * @param array $schema_props
+   *   The props schema.
+   * @param array $classes_per_prop
+   *   Associative array of prop names to class types.
+   *
+   * @return array
+   *   The modified schema with class types replaced by 'null'.
+   */
+  private function nullifyClassPropsSchema(array $schema_props, array $classes_per_prop): array
+  {
+    foreach ($schema_props['properties'] ?? [] as $prop_name => $prop_def) {
+      $class_types = $classes_per_prop[$prop_name] ?? [];
+      if (empty($class_types)) {
         continue;
       }
-
-      $types = is_array($prop_def->type) ? $prop_def->type : [$prop_def->type];
-
-      // Filter out class/interface types.
-      $json_types = array_values(array_filter($types, function($type) {
-        return in_array($type, ['array', 'boolean', 'integer', 'null', 'number', 'object', 'string']);
-      }));
-
-      // If no valid JSON types remain, set to null.
-      if (empty($json_types)) {
-        $json_types = ['null'];
-      }
-
-      $data->props->properties->{$prop_name}->type = $json_types;
+      // Remove the non JSON Schema types.
+      $types = (array) ($prop_def['type'] ?? ['null']);
+      $types = array_diff($types, $class_types);
+      $types = empty($types) ? ['null'] : $types;
+      $schema_props['properties'][$prop_name]['type'] = $types;
     }
-
-    return $data;
+    return $schema_props;
   }
 
   /**
