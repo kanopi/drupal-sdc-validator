@@ -123,30 +123,6 @@ composer validate-sdc
 composer validate-sdc-enforce
 ```
 
-### Testing Locally (Before Packagist)
-
-To test this package locally before it's on Packagist:
-
-1. In your project's `composer.json`, add:
-   ```json
-   {
-     "repositories": [
-       {
-         "type": "path",
-         "url": "/path/to/drupal-sdc-validator",
-         "options": {
-           "symlink": true
-         }
-       }
-     ]
-   }
-   ```
-
-2. Install it:
-   ```bash
-   composer require --dev kanopi/drupal-sdc-validator
-   ```
-
 ---
 
 ## 📝 License
