@@ -62,6 +62,9 @@ class Validator
       try {
         $yamlData = Yaml::parseFile($filePath);
 
+        // Remove $schema property - it's informational and can cause validation issues.
+        unset($yamlData['$schema']);
+
         // Handle empty properties object.
         if (isset($yamlData['props']['properties']) && $yamlData['props']['properties'] === []) {
           $yamlData['props']['properties'] = new \stdClass();
