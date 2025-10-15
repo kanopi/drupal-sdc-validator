@@ -108,10 +108,10 @@ class Validator
    *
    * Tries multiple possible locations for the Drupal schema file.
    *
-   * @return string|null
-   *   The absolute path to the schema file, or null if not found.
+   * @return string
+   *   The absolute path to the schema file.
    */
-  private function findSchemaFile(): ?string
+  private function findSchemaFile(): string
   {
     // Possible schema locations (relative to project root).
     $possiblePaths = [
@@ -129,11 +129,12 @@ class Validator
       }
     }
 
-    // If not found locally, we'll just skip JSON schema validation.
-    // The validator will still check structure, collisions, types, etc.
-    echo "Note: Local schema file not found. Skipping JSON Schema validation.\n";
-    echo "      (Structure validation will still run)\n\n";
-    return null;
+    // Error if schema file not found.
+    echo "Error: Schema file not found. Tried:\n";
+    foreach ($possiblePaths as $path) {
+      echo "  - $path\n";
+    }
+    exit(1);
   }
 
   /**
@@ -226,15 +227,15 @@ class Validator
    *   The component definition from YAML.
    * @param string $filePath
    *   The file path (for error context).
-   * @param string|null $schemaPath
-   *   The path to the JSON schema file (or null if unavailable).
+   * @param string $schemaPath
+   *   The path to the JSON schema file.
    * @param bool $enforce_schemas
    *   Whether to enforce schema definitions.
    *
    * @return array
    *   Array of error messages.
    */
-  private function validateComponentDefinition(array $definition, string $filePath, ?string $schemaPath, bool $enforce_schemas): array
+  private function validateComponentDefinition(array $definition, string $filePath, string $schemaPath, bool $enforce_schemas): array
   {
     $errors = [];
     $componentId = $definition['id'] ?? 'unknown';
@@ -309,32 +310,26 @@ class Validator
     // 6. Remove non JSON Schema types for validation.
     $definition['props'] = $this->nullifyClassPropsSchema($propsSchema, $classes_per_prop);
 
-    // 7. Validate against JSON Schema (if available).
-    if ($schemaPath !== null) {
-      try {
-        // Recursively remove any $schema properties from the definition.
-        $definition = $this->removeSchemaReferences($definition);
+    // 7. Validate against JSON Schema.
+    try {
+      // Recursively remove any $schema properties from the definition.
+      $definition = $this->removeSchemaReferences($definition);
 
-        $validator = new JsonValidator();
-        $definition_object = JsonValidator::arrayToObjectRecursive($definition);
-        $validator->reset();
-        $validator->validate(
-          $definition_object,
-          (object) ['$ref' => 'file://' . $schemaPath]
-        );
+      $validator = new JsonValidator();
+      $definition_object = JsonValidator::arrayToObjectRecursive($definition);
+      $validator->reset();
+      $validator->validate(
+        $definition_object,
+        (object) ['$ref' => 'file://' . $schemaPath]
+      );
 
-        if (!$validator->isValid()) {
-          foreach ($validator->getErrors() as $error) {
-            $errors[] = sprintf('[%s] %s', $error['property'], $error['message']);
-          }
-        }
-      } catch (\Exception $e) {
-        // Catch schema resolution errors but continue validation.
-        // This handles cases where $schema references can't be resolved.
-        if (!str_contains($e->getMessage(), '$schema') && !str_contains($e->getMessage(), 'internal://')) {
-          $errors[] = 'Schema validation error: ' . $e->getMessage();
+      if (!$validator->isValid()) {
+        foreach ($validator->getErrors() as $error) {
+          $errors[] = sprintf('[%s] %s', $error['property'], $error['message']);
         }
       }
+    } catch (\Exception $e) {
+      $errors[] = 'Schema validation error: ' . $e->getMessage();
     }
 
     // 8. Add missing class errors.
