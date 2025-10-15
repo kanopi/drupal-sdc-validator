@@ -2,7 +2,7 @@
 
 A CLI tool to validate [Drupal Single Directory Component (SDC)](https://www.drupal.org/docs/develop/theming-drupal/using-single-directory-components) `.component.yml` files for structure and schema compliance.
 
-This validator helps you ensure your SDC metadata files follow the [Drupal core schema](https://git.drupalcode.org/project/drupal/-/blob/HEAD/core/assets/schemas/v1/metadata.schema.json), and reports any missing fields, invalid structures, or schema violations.
+This validator helps you ensure your SDC metadata files follow the [Drupal core schema](https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata-full.schema.json), and reports any missing fields, invalid structures, or schema violations.
 
 ---
 
