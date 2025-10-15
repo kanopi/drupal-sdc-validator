@@ -258,6 +258,9 @@ class Validator
   {
     $errors = [];
 
+    // Remove $schema property from data object to prevent validation issues.
+    unset($data->{'$schema'});
+
     // Check if schema is enforced but missing.
     if ($enforce_schemas && !isset($data->props)) {
       $component_id = $data->machineName ?? $data->name ?? 'unknown';
