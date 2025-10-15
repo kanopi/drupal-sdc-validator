@@ -23,22 +23,10 @@ class Validator
     $paths = array_slice($argv, 1);
 
     if (empty($paths)) {
-      echo "Usage: validate-sdc [path1] [path2] ... [--enforce-schemas]\n";
+      echo "Usage: validate-sdc [path1] [path2] ...\n";
       echo "Example: validate-sdc web/themes/custom/[theme_name]/components\n";
-      echo "Options:\n";
-      echo "  --enforce-schemas  Require schema definitions for all components\n";
       return 1;
     }
-
-    // Check for --enforce-schemas flag.
-    $enforce_schemas = false;
-    $paths = array_filter($paths, function($path) use (&$enforce_schemas) {
-      if ($path === '--enforce-schemas') {
-        $enforce_schemas = true;
-        return false;
-      }
-      return true;
-    });
 
     // Find schema file.
     $schemaPath = $this->findSchemaFile();
@@ -72,7 +60,7 @@ class Validator
         }
 
         // Validate like Drupal's ComponentValidator.
-        $errors = $this->validateComponentDefinition($yamlData, $filePath, $schemaPath, $enforce_schemas);
+        $errors = $this->validateComponentDefinition($yamlData, $filePath, $schemaPath);
 
         if (!empty($errors)) {
           $hasErrors = true;
@@ -132,7 +120,7 @@ class Validator
   /**
    * Validates component definition like ComponentValidator::validateDefinition().
    */
-  private function validateComponentDefinition(array $definition, string $filePath, string $schemaPath, bool $enforce_schemas): array
+  private function validateComponentDefinition(array $definition, string $filePath, string $schemaPath): array
   {
     $errors = [];
     $componentId = $definition['id'] ?? basename(dirname($filePath));
@@ -149,24 +137,32 @@ class Validator
       );
     }
 
-    // 2. Check if schema (props) exists.
+    // 2. Check props structure if present.
+    if (isset($definition['props'])) {
+      if (!isset($definition['props']['type'])) {
+        $errors[] = "props must have a 'type' field";
+      }
+      elseif ($definition['props']['type'] === 'object' && !isset($definition['props']['properties'])) {
+        $errors[] = "props with type 'object' must have a 'properties' field (use 'properties: {}' if empty)";
+      }
+    }
+
+    // 3. Check if schema (props) exists - now required.
     $schema = $definition['props'] ?? NULL;
     if (!$schema) {
-      if ($enforce_schemas) {
-        $errors[] = sprintf(
-          'The component "%s" does not provide schema information (props).',
-          $componentId
-        );
-      }
+      $errors[] = sprintf(
+        'The component "%s" does not provide schema information (props).',
+        $componentId
+      );
       return $errors;
     }
 
-    // 3. If there are no props, force casting to object instead of array.
+    // 4. If there are no props, force casting to object instead of array.
     if (($schema['properties'] ?? NULL) === []) {
       $schema['properties'] = new \stdClass();
     }
 
-    // 4. Ensure that all property types are strings.
+    // 5. Ensure that all property types are strings.
     $non_string_props = [];
     foreach ($prop_names as $prop) {
       if (!isset($schema['properties'][$prop]['type'])) {
@@ -188,7 +184,7 @@ class Validator
       );
     }
 
-    // 5. Detect props with class types and validate they exist.
+    // 6. Detect props with class types and validate they exist.
     $classes_per_prop = $this->getClassProps($schema);
     $missing_class_errors = [];
     foreach ($classes_per_prop as $prop_name => $class_types) {
@@ -203,10 +199,10 @@ class Validator
       }
     }
 
-    // 6. Remove non JSON Schema types for validation.
+    // 7. Remove non JSON Schema types for validation.
     $definition['props'] = $this->nullifyClassPropsSchema($schema, $classes_per_prop);
 
-    // 7. Validate against JSON Schema.
+    // 8. Validate against JSON Schema.
     try {
       $validator = new JsonValidator();
       $definition_object = JsonValidator::arrayToObjectRecursive($definition);
@@ -226,7 +222,7 @@ class Validator
       $errors[] = 'Schema validation error: ' . $e->getMessage();
     }
 
-    // 8. Add missing class errors.
+    // 9. Add missing class errors.
     $errors = array_merge($errors, $missing_class_errors);
 
     return $errors;
