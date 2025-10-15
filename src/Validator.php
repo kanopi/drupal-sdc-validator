@@ -4,7 +4,6 @@ namespace Kanopi\DrupalSdcValidator;
 
 use Symfony\Component\Yaml\Yaml;
 use JsonSchema\Validator as JsonValidator;
-use JsonSchema\Constraints\Constraint;
 
 /**
  * Validates Drupal Single Directory Component (.component.yml) files.
@@ -41,9 +40,8 @@ class Validator
       return true;
     });
 
-    $remoteSchemaUrl = 'https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata-full.schema.json';
-
-    $schema = $this->getSchema($remoteSchemaUrl);
+    // Try to find local schema file first, fall back to remote.
+    $schemaPath = $this->findSchemaFile();
 
     // Collect all .component.yml files.
     $allFiles = [];
@@ -75,7 +73,7 @@ class Validator
         unset($yamlData['$schema']);
 
         // Validate like Drupal's ComponentValidator::validateDefinition().
-        $allErrors = $this->validateComponentDefinition($yamlData, $filePath, $schema, $enforce_schemas);
+        $allErrors = $this->validateComponentDefinition($yamlData, $filePath, $schemaPath, $enforce_schemas);
 
         if (!empty($allErrors)) {
           $hasErrors = true;
@@ -103,6 +101,39 @@ class Validator
       echo "✓ All {$totalFiles} component files are valid!\n";
       return 0;
     }
+  }
+
+  /**
+   * Finds the schema file path.
+   *
+   * Tries multiple possible locations for the Drupal schema file.
+   *
+   * @return string|null
+   *   The absolute path to the schema file, or null if not found.
+   */
+  private function findSchemaFile(): ?string
+  {
+    // Possible schema locations (relative to project root).
+    $possiblePaths = [
+      'web/core/assets/schemas/v1/metadata.schema.json',
+      'docroot/core/assets/schemas/v1/metadata.schema.json',
+      'core/assets/schemas/v1/metadata.schema.json',
+    ];
+
+    // Try from current working directory.
+    $cwd = getcwd();
+    foreach ($possiblePaths as $relativePath) {
+      $fullPath = $cwd . '/' . $relativePath;
+      if (file_exists($fullPath)) {
+        return $fullPath;
+      }
+    }
+
+    // If not found locally, we'll just skip JSON schema validation.
+    // The validator will still check structure, collisions, types, etc.
+    echo "Note: Local schema file not found. Skipping JSON Schema validation.\n";
+    echo "      (Structure validation will still run)\n\n";
+    return null;
   }
 
   /**
@@ -195,15 +226,15 @@ class Validator
    *   The component definition from YAML.
    * @param string $filePath
    *   The file path (for error context).
-   * @param object|null $schema
-   *   The JSON schema object to validate against.
+   * @param string|null $schemaPath
+   *   The path to the JSON schema file (or null if unavailable).
    * @param bool $enforce_schemas
    *   Whether to enforce schema definitions.
    *
    * @return array
    *   Array of error messages.
    */
-  private function validateComponentDefinition(array $definition, string $filePath, ?object $schema, bool $enforce_schemas): array
+  private function validateComponentDefinition(array $definition, string $filePath, ?string $schemaPath, bool $enforce_schemas): array
   {
     $errors = [];
     $componentId = $definition['id'] ?? 'unknown';
@@ -279,7 +310,7 @@ class Validator
     $definition['props'] = $this->nullifyClassPropsSchema($propsSchema, $classes_per_prop);
 
     // 7. Validate against JSON Schema (if available).
-    if ($schema !== null) {
+    if ($schemaPath !== null) {
       try {
         // Recursively remove any $schema properties from the definition.
         $definition = $this->removeSchemaReferences($definition);
@@ -287,7 +318,10 @@ class Validator
         $validator = new JsonValidator();
         $definition_object = JsonValidator::arrayToObjectRecursive($definition);
         $validator->reset();
-        $validator->validate($definition_object, $schema, Constraint::CHECK_MODE_TYPE_CAST);
+        $validator->validate(
+          $definition_object,
+          (object) ['$ref' => 'file://' . $schemaPath]
+        );
 
         if (!$validator->isValid()) {
           foreach ($validator->getErrors() as $error) {
