@@ -99,11 +99,33 @@ Properly handles empty `properties: {}` declarations.
 
 ---
 
-## 🧪 Development
+## 🧪 Integration with Your Project
 
-### Testing Locally
+### Add Composer Scripts
 
-To test this package locally before publishing:
+Once installed, add these scripts to your project's `composer.json` for easy access:
+
+```json
+{
+  "scripts": {
+    "validate-sdc": "vendor/bin/validate-sdc web/themes/custom",
+    "validate-sdc-enforce": "vendor/bin/validate-sdc web/themes/custom --enforce-schemas"
+  }
+}
+```
+
+Then run:
+```bash
+# Lenient mode (themes)
+composer validate-sdc
+
+# Strict mode (modules)
+composer validate-sdc-enforce
+```
+
+### Testing Locally (Before Packagist)
+
+To test this package locally before it's on Packagist:
 
 1. In your project's `composer.json`, add:
    ```json
