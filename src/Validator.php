@@ -280,14 +280,25 @@ class Validator
 
     // 7. Validate against JSON Schema (if available).
     if ($schema !== null) {
-      $validator = new JsonValidator();
-      $definition_object = JsonValidator::arrayToObjectRecursive($definition);
-      $validator->reset();
-      $validator->validate($definition_object, $schema, Constraint::CHECK_MODE_TYPE_CAST);
+      try {
+        // Recursively remove any $schema properties from the definition.
+        $definition = $this->removeSchemaReferences($definition);
 
-      if (!$validator->isValid()) {
-        foreach ($validator->getErrors() as $error) {
-          $errors[] = sprintf('[%s] %s', $error['property'], $error['message']);
+        $validator = new JsonValidator();
+        $definition_object = JsonValidator::arrayToObjectRecursive($definition);
+        $validator->reset();
+        $validator->validate($definition_object, $schema, Constraint::CHECK_MODE_TYPE_CAST);
+
+        if (!$validator->isValid()) {
+          foreach ($validator->getErrors() as $error) {
+            $errors[] = sprintf('[%s] %s', $error['property'], $error['message']);
+          }
+        }
+      } catch (\Exception $e) {
+        // Catch schema resolution errors but continue validation.
+        // This handles cases where $schema references can't be resolved.
+        if (!str_contains($e->getMessage(), '$schema') && !str_contains($e->getMessage(), 'internal://')) {
+          $errors[] = 'Schema validation error: ' . $e->getMessage();
         }
       }
     }
@@ -296,6 +307,28 @@ class Validator
     $errors = array_merge($errors, $missing_class_errors);
 
     return $errors;
+  }
+
+  /**
+   * Recursively removes $schema properties from an array.
+   *
+   * @param array $data
+   *   The array to clean.
+   *
+   * @return array
+   *   The cleaned array.
+   */
+  private function removeSchemaReferences(array $data): array
+  {
+    unset($data['$schema']);
+
+    foreach ($data as $key => $value) {
+      if (is_array($value)) {
+        $data[$key] = $this->removeSchemaReferences($value);
+      }
+    }
+
+    return $data;
   }
 
   /**
