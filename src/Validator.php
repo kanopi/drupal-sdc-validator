@@ -21,7 +21,7 @@ class Validator
 
     if (empty($paths)) {
       echo "Usage: validate-sdc [path1] [path2] ... [--enforce-schemas]\n";
-      echo "Example: validate-sdc web/themes/custom/mises/components\n";
+      echo "Example: validate-sdc web/themes/custom/[theme_name]/components\n";
       echo "Options:\n";
       echo "  --enforce-schemas  Require schema definitions for all components\n";
       return 1;
