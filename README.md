@@ -108,8 +108,12 @@ Once installed, add these scripts to your project's `composer.json` for easy acc
 ```json
 {
   "scripts": {
-    "validate-sdc": "vendor/bin/validate-sdc web/themes/custom",
-    "validate-sdc-enforce": "vendor/bin/validate-sdc web/themes/custom --enforce-schemas"
+    "validate-sdc": [
+      "@php vendor/bin/validate-sdc web/themes/custom"
+    ],
+    "validate-sdc-enforce": [
+      "@php vendor/bin/validate-sdc web/themes/custom --enforce-schemas"
+    ]
   }
 }
 ```
@@ -122,6 +126,8 @@ composer validate-sdc
 # Strict mode (modules)
 composer validate-sdc-enforce
 ```
+
+**Note:** Using `@php` ensures exit codes are properly propagated, making validation failures fail CI/CD pipelines.
 
 ---
 
