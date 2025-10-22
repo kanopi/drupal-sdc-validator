@@ -98,7 +98,7 @@ class Validator
       echo "\nThese errors match what Drupal's ComponentValidator would throw.\n";
       return 1;
     } else {
-      echo "✓ All {$totalFiles} component files are valid!\n";
+      echo "[OK] All {$totalFiles} component files are valid!\n";
       return 0;
     }
   }
